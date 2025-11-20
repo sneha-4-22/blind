@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Clear Path Navigation</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 10px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 600px;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            margin-bottom: 5px;
+        }
+
+        .header p {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .video-container {
+            position: relative;
+            width: 100%;
+            background: #000;
+            min-height: 300px;
+        }
+
+        #video, #canvas {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        #processedImage {
+            width: 100%;
+            height: auto;
+            display: none;
+        }
+
+        .direction-display {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 15px 30px;
+            border-radius: 50px;
+            font-size: 20px;
+            font-weight: bold;
+            z-index: 10;
+            display: none;
+        }
+
+        .direction-left { background: rgba(255, 152, 0, 0.9); }
+        .direction-right { background: rgba(33, 150, 243, 0.9); }
+        .direction-straight { background: rgba(76, 175, 80, 0.9); }
+        .direction-blocked { background: rgba(244, 67, 54, 0.9); }
+
+        .controls {
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+        }
+
+        button {
+            flex: 1;
+            padding: 15px;
+            font-size: 16px;
+            font-weight: bold;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        #startBtn {
+            background: #4CAF50;
+            color: white;
+        }
+
+        #startBtn:hover {
+            background: #45a049;
+        }
+
+        #stopBtn {
+            background: #f44336;
+            color: white;
+        }
+
+        #stopBtn:hover {
+            background: #da190b;
+        }
+
+        #switchCameraBtn {
+            background: #2196F3;
+            color: white;
+        }
+
+        #switchCameraBtn:hover {
+            background: #0b7dda;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .status {
+            text-align: center;
+            padding: 10px;
+            background: #f5f5f5;
+            border-radius: 10px;
+            font-size: 14px;
+        }
+
+        .status.active {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 10px;
+            color: #666;
+        }
+
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 10px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚶 Clear Path Navigation</h1>
+            <p>AI-powered obstacle detection for safe navigation</p>
+        </div>
+
+        <div class="video-container">
+            <video id="video" autoplay playsinline></video>
+            <canvas id="canvas" style="display: none;"></canvas>
+            <img id="processedImage" alt="Processed frame">
+            <div id="directionDisplay" class="direction-display">READY</div>
+        </div>
+
+        <div class="controls">
+            <div class="button-group">
+                <button id="startBtn">▶ Start</button>
+                <button id="stopBtn" disabled>⏸ Stop</button>
+            </div>
+            <button id="switchCameraBtn">🔄 Switch Camera</button>
+            <div id="status" class="status">Press Start to begin</div>
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                Processing...
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const processedImage = document.getElementById('processedImage');
+        const directionDisplay = document.getElementById('directionDisplay');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const switchCameraBtn = document.getElementById('switchCameraBtn');
+        const status = document.getElementById('status');
+        const loading = document.getElementById('loading');
+
+        let stream = null;
+        let isRunning = false;
+        let processingInterval = null;
+        let currentCamera = 'environment'; // 'environment' = back camera, 'user' = front camera
+        let lastDirection = null;
+
+        // Voice synthesis
+        const voices = {
+            left: new SpeechSynthesisUtterance("Move slightly left"),
+            right: new SpeechSynthesisUtterance("Move slightly right"),
+            straight: new SpeechSynthesisUtterance("Move straight ahead"),
+            blocked: new SpeechSynthesisUtterance("No clear path. Please stop.")
+        };
+
+        // Start camera
+        async function startCamera() {
+            try {
+                if (stream) {
+                    stream.getTracks().forEach(track => track.stop());
+                }
+
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: currentCamera,
+                        width: { ideal: 640 },
+                        height: { ideal: 480 }
+                    }
+                });
+
+                video.srcObject = stream;
+                video.style.display = 'block';
+                processedImage.style.display = 'none';
+                status.textContent = 'Camera ready';
+            } catch (err) {
+                alert('Error accessing camera: ' + err.message);
+                console.error(err);
+            }
+        }
+
+        // Process frame
+        async function processFrame() {
+            if (!isRunning) return;
+
+            loading.style.display = 'block';
+
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            ctx.drawImage(video, 0, 0);
+
+            const imageData = canvas.toDataURL('image/jpeg', 0.8);
+
+            try {
+                const response = await fetch('/process_frame', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ image: imageData })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    processedImage.src = result.image;
+                    processedImage.style.display = 'block';
+                    video.style.display = 'none';
+
+                    // Update direction display
+                    const direction = result.direction;
+                    directionDisplay.textContent = direction.toUpperCase();
+                    directionDisplay.className = 'direction-display direction-' + direction;
+                    directionDisplay.style.display = 'block';
+
+                    // Speak only if direction changed
+                    if (direction !== lastDirection) {
+                        window.speechSynthesis.cancel();
+                        window.speechSynthesis.speak(voices[direction]);
+                        lastDirection = direction;
+                    }
+                } else {
+                    console.error('Processing error:', result.error);
+                }
+            } catch (err) {
+                console.error('Request error:', err);
+            } finally {
+                loading.style.display = 'none';
+            }
+        }
+
+        // Start detection
+        startBtn.addEventListener('click', async () => {
+            await startCamera();
+            isRunning = true;
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+            status.textContent = '✓ Detection active';
+            status.classList.add('active');
+
+            // Process every 500ms
+            processingInterval = setInterval(processFrame, 500);
+        });
+
+        // Stop detection
+        stopBtn.addEventListener('click', () => {
+            isRunning = false;
+            clearInterval(processingInterval);
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            status.textContent = 'Detection stopped';
+            status.classList.remove('active');
+            directionDisplay.style.display = 'none';
+            processedImage.style.display = 'none';
+            video.style.display = 'block';
+        });
+
+        // Switch camera
+        switchCameraBtn.addEventListener('click', async () => {
+            currentCamera = currentCamera === 'environment' ? 'user' : 'environment';
+            if (stream) {
+                await startCamera();
+            }
+        });
+    </script>
+</body>
+</html>
